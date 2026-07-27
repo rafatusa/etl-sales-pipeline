@@ -1,0 +1,53 @@
+OrderID,CustomerID,ProductID,ProductName,Category,Quantity,UnitPrice,OrderDate,Region
+ORD-001,CUST-101,PROD-A1,Wireless Mouse,Electronics,2,29.99,2024-01-15,North
+ORD-002,CUST-102,PROD-B2,Office Chair,Furniture,1,249.00,2024-01-16,South
+ORD-003,CUST-103,PROD-A1,Wireless Mouse,Electronics,3,29.99,2024-01-16,East
+ORD-004,CUST-104,PROD-C3,USB-C Hub,Electronics,1,49.99,2024-01-17,West
+ORD-005,CUST-105,PROD-D4,Standing Desk,Furniture,1,599.00,2024-01-17,North
+ORD-006,CUST-101,PROD-E5,Laptop Stand,Electronics,2,39.99,2024-01-18,North
+ORD-007,CUST-106,PROD-F6,Ergonomic Keyboard,Electronics,1,89.99,2024-01-18,South
+ORD-008,CUST-107,PROD-G7,Monitor 27in,Electronics,2,329.00,2024-01-19,East
+ORD-009,CUST-108,PROD-H8,Desk Lamp,Office Supplies,3,24.99,2024-01-19,West
+ORD-010,CUST-109,PROD-I9,Notebook Pack,Office Supplies,5,12.99,2024-01-20,North
+ORD-011,CUST-110,PROD-J10,Cable Organiser,Office Supplies,4,9.99,2024-01-20,South
+ORD-012,CUST-111,PROD-A1,Wireless Mouse,Electronics,1,29.99,2024-01-21,East
+ORD-013,CUST-112,PROD-K11,Webcam HD,Electronics,2,79.99,2024-01-21,West
+ORD-014,CUST-113,PROD-L12,Mechanical Keyboard,Electronics,1,129.99,2024-01-22,North
+ORD-015,CUST-114,PROD-M13,Headphones Pro,Electronics,1,199.99,2024-01-22,South
+ORD-016,CUST-115,PROD-N14,Mouse Pad XL,Office Supplies,2,19.99,2024-01-23,East
+ORD-017,CUST-116,PROD-O15,Bookshelf,Furniture,1,189.00,2024-01-23,West
+ORD-018,CUST-117,PROD-P16,File Cabinet,Furniture,1,299.00,2024-01-24,North
+ORD-019,CUST-118,PROD-Q17,Desk Organiser,Office Supplies,3,34.99,2024-01-24,South
+ORD-020,CUST-119,PROD-R18,Whiteboard,Office Supplies,1,79.99,2024-01-25,East
+ORD-001,CUST-101,PROD-A1,Wireless Mouse,Electronics,2,29.99,2024-01-15,North
+ORD-021,CUST-120,PROD-S19,Conference Phone,Electronics,1,449.99,2024-01-25,West
+ORD-022,CUST-121,PROD-T20,Projector Screen,Electronics,1,159.00,2024-01-26,North
+ORD-023,CUST-122,PROD-U21,Laptop Bag,Accessories,2,59.99,2024-01-26,South
+ORD-024,CUST-123,PROD-V22,Power Strip,Office Supplies,3,29.99,2024-01-27,East
+ORD-025,CUST-124,PROD-W23,Shredder,Office Supplies,1,149.99,2024-01-27,West
+ORD-026,CUST-125,PROD-X24,Stapler Pro,Office Supplies,2,24.99,2024-01-28,North
+ORD-027,CUST-126,PROD-Y25,Printer A4,Electronics,1,219.99,2024-01-28,South
+ORD-028,CUST-127,PROD-Z26,Scanner Flatbed,Electronics,1,299.00,2024-01-29,East
+ORD-029,CUST-128,PROD-A2,Toner Cartridge,Office Supplies,4,49.99,2024-01-29,West
+ORD-030,CUST-129,PROD-B3,Copy Paper A4,Office Supplies,10,8.99,2024-01-30,North
+ORD-031,CUST-130,PROD-C4,Binder Pack,Office Supplies,6,14.99,2024-01-30,South
+ORD-032,CUST-131,PROD-D5,Pen Set,Office Supplies,3,19.99,2024-01-31,East
+ORD-033,CUST-132,PROD-E6,Highlighter Pack,Office Supplies,5,9.99,2024-01-31,West
+ORD-034,CUST-133,PROD-F7,Sticky Notes,Office Supplies,8,6.99,2024-02-01,North
+ORD-035,CUST-134,PROD-G8,Index Cards,Office Supplies,4,4.99,2024-02-01,South
+ORD-036,CUST-135,PROD-H9,Scissors,Office Supplies,2,12.99,2024-02-02,East
+ORD-037,CUST-136,PROD-I10,Tape Dispenser,Office Supplies,3,8.99,2024-02-02,West
+ORD-038,CUST-137,PROD-J11,Folder Pack,Office Supplies,5,11.99,2024-02-03,North
+,CUST-138,PROD-K12,Invalid No OrderID,Electronics,1,49.99,2024-02-03,South
+ORD-040,CUST-139,PROD-L13,Desk Fan,Electronics,-1,39.99,2024-02-04,East
+ORD-041,CUST-140,PROD-M14,Air Purifier,Electronics,1,not-a-price,2024-02-04,West
+ORD-042,CUST-141,PROD-N15,Coffee Maker,Appliances,2,89.99,2024-02-05,North
+ORD-043,CUST-142,PROD-O16,Water Dispenser,Appliances,1,199.99,2024-02-05,South
+ORD-044,CUST-143,PROD-P17,Microwave,Appliances,1,149.99,not-a-date,East
+ORD-045,CUST-144,PROD-Q18,Mini Fridge,Appliances,1,299.99,2024-02-06,West
+ORD-046,CUST-145,PROD-R19,Kettle,Appliances,2,49.99,2024-02-06,North
+ORD-047,CUST-146,PROD-S20,Toaster,Appliances,1,39.99,2024-02-07,South
+ORD-048,CUST-147,PROD-T21,Blender,Appliances,1,79.99,2024-02-07,East
+ORD-049,CUST-148,PROD-U22,Sandwich Press,Appliances,2,59.99,2024-02-08,West
+ORD-050,CUST-149,PROD-V23,Espresso Machine,Appliances,1,349.99,2024-02-08,North
+ORD-002,CUST-102,PROD-B2,Office Chair,Furniture,1,249.00,2024-01-16,South

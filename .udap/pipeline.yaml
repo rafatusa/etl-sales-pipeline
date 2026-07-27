@@ -1,0 +1,239 @@
+version: 1
+name: etl-sales-pipeline
+vcs: github
+
+stages:
+  - id: lint
+    kind: lint
+    needs: []
+    timeout_minutes: 10
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install linters
+        run: pip install flake8 black isort
+      - name: Run flake8
+        run: flake8 etl/ --max-line-length=120 --exclude=__pycache__
+      - name: Check black formatting
+        run: black --check etl/
+      - name: Check import ordering
+        run: isort --check-only etl/
+
+  - id: test
+    kind: test
+    needs: [lint]
+    timeout_minutes: 15
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest pytest-cov
+      - name: Run unit tests
+        run: pytest tests/ -v --cov=etl --cov-report=term-missing
+
+  - id: build_push
+    kind: build_push
+    needs: [test]
+    timeout_minutes: 20
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+      - name: Login to Amazon ECR
+        id: ecr_login
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Build and push Docker image
+        env:
+          ECR_REGISTRY: ${{ steps.ecr_login.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+          PROJECT: ${{ secrets.PROJECT_NAME }}
+        run: |
+          docker build -t $ECR_REGISTRY/$PROJECT-etl:$IMAGE_TAG -t $ECR_REGISTRY/$PROJECT-etl:latest .
+          docker push $ECR_REGISTRY/$PROJECT-etl:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$PROJECT-etl:latest
+
+  - id: provision
+    kind: provision
+    needs: [build_push]
+    timeout_minutes: 30
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: us-east-1
+      TF_VAR_project_name: ${{ secrets.PROJECT_NAME }}
+      TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+      TF_VAR_image_tag: ${{ github.sha }}
+    steps:
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+      - name: Terraform Init
+        working-directory: infra
+        run: |
+          terraform init -input=false -reconfigure \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=${{ secrets.PROJECT_NAME }}/terraform.tfstate" \
+            -backend-config="region=us-east-1"
+      - name: Terraform Validate
+        working-directory: infra
+        run: terraform validate
+      - name: Terraform Plan
+        working-directory: infra
+        run: terraform plan -input=false -out=tfplan
+      - name: Terraform Apply
+        working-directory: infra
+        run: terraform apply -input=false tfplan
+
+  - id: configure
+    kind: configure
+    needs: [provision]
+    timeout_minutes: 20
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: us-east-1
+      TF_VAR_project_name: ${{ secrets.PROJECT_NAME }}
+      TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+      TF_VAR_image_tag: ${{ github.sha }}
+    steps:
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+      - name: Terraform Init (read outputs)
+        working-directory: infra
+        run: |
+          terraform init -input=false -reconfigure \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=${{ secrets.PROJECT_NAME }}/terraform.tfstate" \
+            -backend-config="region=us-east-1"
+      - name: Run DB schema migration
+        working-directory: infra
+        env:
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          PROJECT_NAME: ${{ secrets.PROJECT_NAME }}
+        run: |
+          RDS_ENDPOINT=$(terraform output -raw rds_endpoint)
+          pip install psycopg2-binary sqlalchemy
+          python ../scripts/init_schema.py \
+            --host "$RDS_ENDPOINT" \
+            --db salesdb \
+            --user etladmin \
+            --password "$DB_PASSWORD"
+      - name: Upload sample CSV to S3
+        env:
+          PROJECT_NAME: ${{ secrets.PROJECT_NAME }}
+        working-directory: infra
+        run: |
+          BUCKET=$(terraform output -raw s3_bucket_name)
+          aws s3 cp ../data/sample_sales.csv s3://$BUCKET/input/sample_sales.csv
+      - name: Register EventBridge schedule
+        working-directory: infra
+        env:
+          PROJECT_NAME: ${{ secrets.PROJECT_NAME }}
+        run: |
+          SCHEDULE_ARN=$(terraform output -raw eventbridge_schedule_arn)
+          echo "EventBridge schedule provisioned at $SCHEDULE_ARN"
+
+  - id: verify
+    kind: verify
+    needs: [configure]
+    timeout_minutes: 15
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: us-east-1
+      TF_VAR_project_name: ${{ secrets.PROJECT_NAME }}
+      TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+      TF_VAR_image_tag: ${{ github.sha }}
+    steps:
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+      - name: Terraform Init (read outputs)
+        working-directory: infra
+        run: |
+          terraform init -input=false -reconfigure \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=${{ secrets.PROJECT_NAME }}/terraform.tfstate" \
+            -backend-config="region=us-east-1"
+      - name: Verify ECS task definition registered
+        working-directory: infra
+        run: |
+          TASK_DEF=$(terraform output -raw ecs_task_definition_arn)
+          aws ecs describe-task-definition --task-definition "$TASK_DEF" \
+            --query 'taskDefinition.status' --output text | grep -q ACTIVE
+          echo "ECS task definition is ACTIVE"
+      - name: Verify S3 bucket accessible
+        working-directory: infra
+        run: |
+          BUCKET=$(terraform output -raw s3_bucket_name)
+          aws s3 ls s3://$BUCKET/input/ | grep sample_sales.csv
+          echo "S3 landing bucket verified"
+      - name: Verify RDS reachable via Secrets Manager
+        working-directory: infra
+        env:
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+        run: |
+          RDS_ENDPOINT=$(terraform output -raw rds_endpoint)
+          pip install psycopg2-binary
+          python -c "
+          import psycopg2, os
+          conn = psycopg2.connect(
+              host='$RDS_ENDPOINT', dbname='salesdb',
+              user='etladmin', password=os.environ['DB_PASSWORD'],
+              connect_timeout=10, sslmode='require'
+          )
+          conn.close()
+          print('RDS connection verified')
+          "
+      - name: Verify CloudWatch log group exists
+        working-directory: infra
+        run: |
+          LOG_GROUP=$(terraform output -raw cloudwatch_log_group)
+          aws logs describe-log-groups --log-group-name-prefix "$LOG_GROUP" \
+            --query 'logGroups[0].logGroupName' --output text | grep -q "$LOG_GROUP"
+          echo "CloudWatch log group verified"
+      - name: Trigger manual ETL run and verify completion
+        working-directory: infra
+        run: |
+          CLUSTER=$(terraform output -raw ecs_cluster_name)
+          TASK_DEF=$(terraform output -raw ecs_task_definition_arn)
+          SUBNET=$(terraform output -raw private_subnet_id)
+          TASK_SG=$(terraform output -raw ecs_task_sg_id)
+          TASK_ARN=$(aws ecs run-task \
+            --cluster "$CLUSTER" \
+            --task-definition "$TASK_DEF" \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNET],securityGroups=[$TASK_SG],assignPublicIp=DISABLED}" \
+            --query 'tasks[0].taskArn' --output text)
+          echo "Triggered ETL task: $TASK_ARN"
+          aws ecs wait tasks-stopped --cluster "$CLUSTER" --tasks "$TASK_ARN"
+          EXIT_CODE=$(aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$TASK_ARN" \
+            --query 'tasks[0].containers[0].exitCode' --output text)
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "ETL task failed with exit code $EXIT_CODE"
+            exit 1
+          fi
+          echo "ETL verify run completed successfully"
+
+rollback:
+  strategy: manual
+
+destroy:
+  steps:
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+    - name: Terraform Init
+      working-directory: infra
+      run: |
+        terraform init -input=false -reconfigure \
+          -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+          -backend-config="key=${{ secrets.PROJECT_NAME }}/terraform.tfstate" \
+          -backend-config="region=us-east-1"
+    - name: Terraform Destroy
+      working-directory: infra
+      run: terraform destroy -input=false -auto-approve

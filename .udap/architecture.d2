@@ -1,0 +1,22 @@
+# udap:meta cloud=aws region=us-east-1 target=ecs
+
+vpc: AWS VPC (us-east-1) {
+  s3_landing: S3 Landing Bucket { shape: rectangle; udap-type: aws.s3 }
+  ecr: ECR Registry { shape: rectangle; udap-type: aws.ecs }
+  ecs_task: ECS Fargate Task (ETL Job) { shape: rectangle; udap-type: aws.ecs }
+  rds: RDS PostgreSQL { shape: cylinder; udap-type: aws.rds }
+  secrets: Secrets Manager { shape: rectangle; udap-type: aws.s3 }
+  cloudwatch: CloudWatch Logs + Alarms { shape: rectangle; udap-type: aws.s3 }
+}
+eventbridge: EventBridge Scheduler { shape: rectangle; udap-type: aws.s3 }
+developer: Developer / CI { shape: person; udap-type: generic.user }
+
+developer -> vpc.ecr: docker push image
+developer -> vpc.s3_landing: upload source CSV
+eventbridge -> vpc.ecs_task: trigger on cron schedule
+vpc.ecr -> vpc.ecs_task: pull ETL image
+vpc.ecs_task -> vpc.s3_landing: read input CSV / write processed + failed
+vpc.ecs_task -> vpc.rds: load cleaned records (SQLAlchemy)
+vpc.ecs_task -> vpc.secrets: fetch DB credentials at runtime
+vpc.ecs_task -> vpc.cloudwatch: structured JSON logs + metrics
+vpc.rds -> vpc.cloudwatch: DB metrics + alarms

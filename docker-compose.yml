@@ -1,0 +1,74 @@
+###############################################################################
+# Local development — runs the ETL pipeline against a local PostgreSQL instance
+# Usage: docker compose up --build
+###############################################################################
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: etl_postgres
+    environment:
+      POSTGRES_USER: etladmin
+      POSTGRES_PASSWORD: localdevpassword
+      POSTGRES_DB: salesdb
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U etladmin -d salesdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  etl:
+    build: .
+    container_name: etl_pipeline
+    env_file: .env
+    environment:
+      # Override DB_HOST to point at the local postgres service
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: salesdb
+      DB_USER: etladmin
+      DB_PASSWORD: localdevpassword
+      DB_SSL_MODE: disable
+      ENVIRONMENT: development
+      LOG_LEVEL: INFO
+    volumes:
+      # Mount data/ so you can drop CSV files in without rebuilding
+      - ./data:/app/data:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Mount sample CSV to S3_BUCKET via local mock — for local runs, set
+    # S3_BUCKET and AWS_DEFAULT_REGION in .env and run with real AWS creds,
+    # or use LocalStack (see README for instructions).
+    restart: "no"
+
+  # Optional: init schema before running ETL locally
+  init-schema:
+    build: .
+    container_name: etl_init_schema
+    entrypoint: ["python", "scripts/init_schema.py"]
+    command:
+      - "--host"
+      - "postgres"
+      - "--db"
+      - "salesdb"
+      - "--user"
+      - "etladmin"
+      - "--password"
+      - "localdevpassword"
+      - "--port"
+      - "5432"
+    environment:
+      DB_SSL_MODE: disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+volumes:
+  pgdata:
