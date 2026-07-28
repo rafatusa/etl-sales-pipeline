@@ -1,5 +1,5 @@
 ###############################################################################
-# VPC — private subnets for RDS + ECS, public subnets for NAT Gateway
+# VPC - private subnets for RDS + ECS, public subnets for NAT Gateway
 ###############################################################################
 
 resource "aws_vpc" "main" {
@@ -96,10 +96,10 @@ resource "aws_route_table_association" "private" {
 # Security Groups
 ###############################################################################
 
-# ECS task SG — egress only (S3/RDS/CloudWatch via NAT or VPC endpoints)
+# ECS task SG - egress only (S3/RDS/CloudWatch via NAT or VPC endpoints)
 resource "aws_security_group" "ecs_task" {
   name        = "${var.project_name}-ecs-task-sg"
-  description = "ETL ECS Fargate task — egress only"
+  description = "ETL ECS Fargate task - egress only"
   vpc_id      = aws_vpc.main.id
 
   egress {
@@ -107,16 +107,16 @@ resource "aws_security_group" "ecs_task" {
     to_port     = 0
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
-    description = "Allow all egress (NAT Gateway)"
+    description = "Allow all egress via NAT Gateway"
   }
 
   tags = { Name = "${var.project_name}-ecs-task-sg" }
 }
 
-# RDS SG — allow ECS task SG on port 5432 only
+# RDS SG - allow ECS task SG on port 5432 only
 resource "aws_security_group" "rds" {
   name        = "${var.project_name}-rds-sg"
-  description = "RDS PostgreSQL — allow ECS tasks only"
+  description = "RDS PostgreSQL - allow ECS tasks only"
   vpc_id      = aws_vpc.main.id
 
   ingress {
