@@ -14,14 +14,77 @@ jobs:
       TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
       TF_VAR_image_tag: latest
     steps:
-    - uses: actions/checkout@v4
-    - name: Setup Terraform
-      uses: hashicorp/setup-terraform@v3
-    - name: Terraform Init
-      run: "terraform init -input=false -reconfigure \\\n  -backend-config=\"bucket=${{\
-        \ secrets.TF_STATE_BUCKET }}\" \\\n  -backend-config=\"key=${{ secrets.PROJECT_NAME\
-        \ }}/terraform.tfstate\" \\\n  -backend-config=\"region=us-east-1\"\n"
-      working-directory: infra
-    - name: Terraform Destroy
-      run: terraform destroy -input=false -auto-approve
-      working-directory: infra
+      - uses: actions/checkout@v4
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+      - name: Terraform Init
+        run: |
+          terraform init -input=false -reconfigure \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=${{ secrets.PROJECT_NAME }}/terraform.tfstate" \
+            -backend-config="region=us-east-1"
+        working-directory: infra
+      - name: Empty S3 bucket (all versions and delete markers)
+        run: |
+          # Resolve bucket name from Terraform output; fall back gracefully if
+          # the bucket does not exist yet (idempotent).
+          BUCKET=$(terraform -chdir=infra output -raw s3_bucket_name 2>/dev/null || true)
+          if [ -z "$BUCKET" ]; then
+            echo "No S3 bucket output found — skipping pre-empty step."
+            exit 0
+          fi
+          echo "Pre-emptying S3 bucket: $BUCKET"
+
+          # Delete all non-current object versions
+          aws s3api list-object-versions \
+            --bucket "$BUCKET" \
+            --query '{Objects: Versions[].{Key: Key, VersionId: VersionId}}' \
+            --output json 2>/dev/null \
+          | jq -e '.Objects | length > 0' > /dev/null 2>&1 && \
+          aws s3api delete-objects \
+            --bucket "$BUCKET" \
+            --delete "$(aws s3api list-object-versions \
+                --bucket "$BUCKET" \
+                --query '{Objects: Versions[].{Key: Key, VersionId: VersionId}}' \
+                --output json)" || true
+
+          # Delete all delete markers
+          aws s3api list-object-versions \
+            --bucket "$BUCKET" \
+            --query '{Objects: DeleteMarkers[].{Key: Key, VersionId: VersionId}}' \
+            --output json 2>/dev/null \
+          | jq -e '.Objects | length > 0' > /dev/null 2>&1 && \
+          aws s3api delete-objects \
+            --bucket "$BUCKET" \
+            --delete "$(aws s3api list-object-versions \
+                --bucket "$BUCKET" \
+                --query '{Objects: DeleteMarkers[].{Key: Key, VersionId: VersionId}}' \
+                --output json)" || true
+
+          echo "S3 bucket $BUCKET emptied (all versions and delete markers removed)."
+      - name: Empty ECR repository (all images)
+        run: |
+          REPO=$(terraform -chdir=infra output -raw ecr_repository_url 2>/dev/null | awk -F/ '{print $NF}' || true)
+          if [ -z "$REPO" ]; then
+            echo "No ECR repository output found — skipping pre-empty step."
+            exit 0
+          fi
+          echo "Pre-emptying ECR repository: $REPO"
+
+          IMAGE_IDS=$(aws ecr list-images \
+            --repository-name "$REPO" \
+            --query 'imageIds[*]' \
+            --output json 2>/dev/null || echo '[]')
+
+          COUNT=$(echo "$IMAGE_IDS" | jq 'length')
+          if [ "$COUNT" -gt 0 ]; then
+            aws ecr batch-delete-image \
+              --repository-name "$REPO" \
+              --image-ids "$IMAGE_IDS"
+            echo "Deleted $COUNT image(s) from ECR repository $REPO."
+          else
+            echo "ECR repository $REPO is already empty."
+          fi
+      - name: Terraform Destroy
+        run: terraform destroy -input=false -auto-approve
+        working-directory: infra
