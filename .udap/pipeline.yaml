@@ -35,9 +35,36 @@ stages:
       - name: Run unit tests
         run: pytest tests/ -v --cov=etl --cov-report=term-missing
 
+  - id: provision_ecr
+    kind: provision
+    needs: [test]
+    timeout_minutes: 15
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: us-east-1
+      TF_VAR_project_name: ${{ secrets.PROJECT_NAME }}
+      TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+      TF_VAR_image_tag: ${{ github.sha }}
+    steps:
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+      - name: Terraform Init
+        working-directory: infra
+        run: |
+          terraform init -input=false -reconfigure \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=${{ secrets.PROJECT_NAME }}/terraform.tfstate" \
+            -backend-config="region=us-east-1"
+      - name: Terraform Apply ECR only
+        working-directory: infra
+        run: |
+          terraform apply -input=false -auto-approve \
+            -target=aws_ecr_repository.etl
+
   - id: build_push
     kind: build_push
-    needs: [test]
+    needs: [provision_ecr]
     timeout_minutes: 20
     steps:
       - name: Configure AWS credentials
@@ -173,7 +200,7 @@ stages:
           BUCKET=$(terraform output -raw s3_bucket_name)
           aws s3 ls s3://$BUCKET/input/ | grep sample_sales.csv
           echo "S3 landing bucket verified"
-      - name: Verify RDS reachable via Secrets Manager
+      - name: Verify RDS reachable
         working-directory: infra
         env:
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
@@ -195,7 +222,7 @@ stages:
         run: |
           LOG_GROUP=$(terraform output -raw cloudwatch_log_group)
           aws logs describe-log-groups --log-group-name-prefix "$LOG_GROUP" \
-            --query 'logGroups[0].logGroups[0].logGroupName' --output text | grep -q "$LOG_GROUP"
+            --query 'logGroups[0].logGroupName' --output text | grep -q "$LOG_GROUP"
           echo "CloudWatch log group verified"
       - name: Trigger manual ETL run and verify completion
         working-directory: infra
