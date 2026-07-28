@@ -45,7 +45,7 @@ stages:
       AWS_DEFAULT_REGION: us-east-1
       TF_VAR_project_name: ${{ secrets.PROJECT_NAME }}
       TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
-      TF_VAR_image_tag: ${{ github.sha }}
+      TF_VAR_image_tag: latest
     steps:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -96,7 +96,7 @@ stages:
       AWS_DEFAULT_REGION: us-east-1
       TF_VAR_project_name: ${{ secrets.PROJECT_NAME }}
       TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
-      TF_VAR_image_tag: ${{ github.sha }}
+      TF_VAR_image_tag: latest
     steps:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -127,7 +127,7 @@ stages:
       AWS_DEFAULT_REGION: us-east-1
       TF_VAR_project_name: ${{ secrets.PROJECT_NAME }}
       TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
-      TF_VAR_image_tag: ${{ github.sha }}
+      TF_VAR_image_tag: latest
     steps:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -144,62 +144,47 @@ stages:
           BUCKET=$(terraform output -raw s3_bucket_name)
           aws s3 cp ../data/sample_sales.csv s3://$BUCKET/input/sample_sales.csv
           echo "Uploaded sample_sales.csv to s3://$BUCKET/input/"
-      - name: Register fresh task def and run schema init in VPC
+      - name: Run schema init via ECS Fargate task in VPC
         working-directory: infra
-        env:
-          IMAGE_TAG: ${{ github.sha }}
         run: |
-          ECR_URL=$(terraform output -raw ecr_repository_url)
-          NEW_IMAGE="${ECR_URL}:${IMAGE_TAG}"
-          FAMILY=$(terraform output -raw ecs_task_definition_arn | sed 's|.*/task-definition/||' | sed 's|:[0-9]*$||')
+          TASK_DEF=$(terraform output -raw ecs_task_definition_arn)
           CLUSTER=$(terraform output -raw ecs_cluster_name)
           SUBNET=$(terraform output -raw private_subnet_id)
           TASK_SG=$(terraform output -raw ecs_task_sg_id)
+          LOG_GROUP=$(terraform output -raw cloudwatch_log_group)
 
-          echo "Registering task definition with image: $NEW_IMAGE"
-          CURRENT_DEF=$(aws ecs describe-task-definition --task-definition "$FAMILY" --query 'taskDefinition' --output json)
-          NEW_DEF=$(echo "$CURRENT_DEF" | python3 -c "
-          import json, sys, os
-          td = json.load(sys.stdin)
-          new_image = os.environ['NEW_IMAGE']
-          for c in td.get('containerDefinitions', []):
-              if c['name'] == 'etl':
-                  c['image'] = new_image
-          keep = ['family','taskRoleArn','executionRoleArn','networkMode',
-                  'containerDefinitions','volumes','placementConstraints',
-                  'requiresCompatibilities','cpu','memory','tags']
-          out = {k: td[k] for k in keep if k in td}
-          print(json.dumps(out))
-          ")
-          FRESH_ARN=$(aws ecs register-task-definition \
-            --cli-input-json "$NEW_DEF" \
-            --query 'taskDefinition.taskDefinitionArn' --output text)
-          echo "Fresh task definition ARN: $FRESH_ARN"
+          echo "Task definition: $TASK_DEF"
+          echo "Cluster: $CLUSTER"
+          echo "Launching schema-init Fargate task in VPC ..."
 
-          OVERRIDES='{"containerOverrides":[{"name":"etl","command":["python","scripts/init_schema.py"]}]}'
-          echo "Launching schema-init in VPC (cluster: $CLUSTER) ..."
           TASK_ARN=$(aws ecs run-task \
             --cluster "$CLUSTER" \
-            --task-definition "$FRESH_ARN" \
+            --task-definition "$TASK_DEF" \
             --launch-type FARGATE \
             --network-configuration "awsvpcConfiguration={subnets=[$SUBNET],securityGroups=[$TASK_SG],assignPublicIp=DISABLED}" \
-            --overrides "$OVERRIDES" \
+            --overrides '{"containerOverrides":[{"name":"etl","command":["python","scripts/init_schema.py"]}]}' \
             --query 'tasks[0].taskArn' --output text)
           echo "Schema-init task ARN: $TASK_ARN"
+
           echo "Waiting for schema-init to complete ..."
           aws ecs wait tasks-stopped --cluster "$CLUSTER" --tasks "$TASK_ARN"
+
           EXIT_CODE=$(aws ecs describe-tasks \
             --cluster "$CLUSTER" --tasks "$TASK_ARN" \
             --query 'tasks[0].containers[0].exitCode' --output text)
+          STOP_CODE=$(aws ecs describe-tasks \
+            --cluster "$CLUSTER" --tasks "$TASK_ARN" \
+            --query 'tasks[0].stopCode' --output text)
+          echo "Schema-init stop code: $STOP_CODE"
           echo "Schema-init exit code: $EXIT_CODE"
+
           if [ "$EXIT_CODE" != "0" ]; then
-            echo "Schema init failed. Fetching last 20 CloudWatch log events ..."
-            LOG_GROUP=$(terraform output -raw cloudwatch_log_group)
             TASK_SHORT=$(echo "$TASK_ARN" | awk -F/ '{print $NF}')
+            echo "Schema init failed. Fetching CloudWatch logs ..."
             aws logs get-log-events \
               --log-group-name "$LOG_GROUP" \
               --log-stream-name "etl/etl/$TASK_SHORT" \
-              --limit 20 --query 'events[*].message' --output text 2>/dev/null || true
+              --limit 30 --query 'events[*].message' --output text 2>/dev/null || true
             exit 1
           fi
           echo "Schema init completed successfully."
@@ -219,7 +204,7 @@ stages:
       AWS_DEFAULT_REGION: us-east-1
       TF_VAR_project_name: ${{ secrets.PROJECT_NAME }}
       TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
-      TF_VAR_image_tag: ${{ github.sha }}
+      TF_VAR_image_tag: latest
     steps:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -233,8 +218,8 @@ stages:
       - name: Verify ECS task definition is ACTIVE
         working-directory: infra
         run: |
-          FAMILY=$(terraform output -raw ecs_task_definition_arn | sed 's|.*/task-definition/||' | sed 's|:[0-9]*$||')
-          STATUS=$(aws ecs describe-task-definition --task-definition "$FAMILY" \
+          TASK_DEF=$(terraform output -raw ecs_task_definition_arn)
+          STATUS=$(aws ecs describe-task-definition --task-definition "$TASK_DEF" \
             --query 'taskDefinition.status' --output text)
           echo "Task definition status: $STATUS"
           [ "$STATUS" = "ACTIVE" ] && echo "ECS task definition verified ACTIVE" || (echo "Unexpected status: $STATUS" && exit 1)
@@ -253,41 +238,36 @@ stages:
           echo "CloudWatch log group verified: $LOG_GROUP"
       - name: Run trial ETL via ECS Fargate and verify success
         working-directory: infra
-        env:
-          IMAGE_TAG: ${{ github.sha }}
         run: |
-          ECR_URL=$(terraform output -raw ecr_repository_url)
-          NEW_IMAGE="${ECR_URL}:${IMAGE_TAG}"
-          FAMILY=$(terraform output -raw ecs_task_definition_arn | sed 's|.*/task-definition/||' | sed 's|:[0-9]*$||')
+          TASK_DEF=$(terraform output -raw ecs_task_definition_arn)
           CLUSTER=$(terraform output -raw ecs_cluster_name)
           SUBNET=$(terraform output -raw private_subnet_id)
           TASK_SG=$(terraform output -raw ecs_task_sg_id)
           LOG_GROUP=$(terraform output -raw cloudwatch_log_group)
 
-          LATEST_ARN=$(aws ecs describe-task-definition \
-            --task-definition "$FAMILY" \
-            --query 'taskDefinition.taskDefinitionArn' --output text)
-
-          echo "Launching trial ETL run with task def: $LATEST_ARN"
+          echo "Launching trial ETL run with task def: $TASK_DEF"
           TASK_ARN=$(aws ecs run-task \
             --cluster "$CLUSTER" \
-            --task-definition "$LATEST_ARN" \
+            --task-definition "$TASK_DEF" \
             --launch-type FARGATE \
             --network-configuration "awsvpcConfiguration={subnets=[$SUBNET],securityGroups=[$TASK_SG],assignPublicIp=DISABLED}" \
             --query 'tasks[0].taskArn' --output text)
           echo "Trial ETL task ARN: $TASK_ARN"
+
           aws ecs wait tasks-stopped --cluster "$CLUSTER" --tasks "$TASK_ARN"
+
           EXIT_CODE=$(aws ecs describe-tasks \
             --cluster "$CLUSTER" --tasks "$TASK_ARN" \
             --query 'tasks[0].containers[0].exitCode' --output text)
           echo "Trial ETL exit code: $EXIT_CODE"
+
           if [ "$EXIT_CODE" != "0" ]; then
-            echo "Trial ETL failed. Fetching last 20 CloudWatch log events ..."
             TASK_SHORT=$(echo "$TASK_ARN" | awk -F/ '{print $NF}')
+            echo "Trial ETL failed. Fetching CloudWatch logs ..."
             aws logs get-log-events \
               --log-group-name "$LOG_GROUP" \
               --log-stream-name "etl/etl/$TASK_SHORT" \
-              --limit 20 --query 'events[*].message' --output text 2>/dev/null || true
+              --limit 30 --query 'events[*].message' --output text 2>/dev/null || true
             exit 1
           fi
           echo "Trial ETL run completed successfully. Pipeline is live."
@@ -302,7 +282,7 @@ destroy:
     AWS_DEFAULT_REGION: us-east-1
     TF_VAR_project_name: ${{ secrets.PROJECT_NAME }}
     TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
-    TF_VAR_image_tag: placeholder
+    TF_VAR_image_tag: latest
   steps:
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v3
