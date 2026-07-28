@@ -16,7 +16,7 @@ jobs:
     - name: Install linters
       run: pip install "flake8==7.1.1" "black==26.1.0" "isort==5.13.2"
     - name: Run flake8
-      run: flake8 etl/ --max-line-length=120 --exclude=__pycache__
+      run: flake8 etl/ --max-line-length=120 --extend-ignore=E203 --exclude=__pycache__
     - name: Check black formatting
       run: black --diff --color etl/
     - name: Check import ordering
@@ -189,7 +189,7 @@ jobs:
         DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
     - name: Verify CloudWatch log group exists
       run: "LOG_GROUP=$(terraform output -raw cloudwatch_log_group)\naws logs describe-log-groups\
-        \ --log-group-name-prefix \"$LOG_GROUP\" \\\n  --query 'logGroups[0].logGroupName'\
+        \ --log-group-name-prefix \"$LOG_GROUP\" \\\n  --query 'logGroups[0].logGroups[0].logGroupName'\
         \ --output text | grep -q \"$LOG_GROUP\"\necho \"CloudWatch log group verified\"\
         \n"
       working-directory: infra
