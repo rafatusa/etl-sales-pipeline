@@ -22,7 +22,7 @@ from etl.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Column name mapping: DataFrame (PascalCase CSV) → DB (snake_case)
+# Column name mapping: DataFrame (PascalCase CSV) -> DB (snake_case)
 COLUMN_MAP = {
     "OrderID": "order_id",
     "CustomerID": "customer_id",
@@ -49,7 +49,7 @@ UPSERT_SQL = text("""
 
 
 def get_engine(config: Config) -> Engine:
-    """Create SQLAlchemy engine with connection pool settings appropriate for a batch job."""
+    """Create SQLAlchemy engine with connection pool settings for a batch job."""
     return create_engine(
         config.db_url,
         pool_size=5,
@@ -60,7 +60,11 @@ def get_engine(config: Config) -> Engine:
     )
 
 
-def _insert_batch(connection, batch: list[dict], batch_num: int) -> tuple[int, int]:
+def _insert_batch(
+    connection,
+    batch: list[dict],
+    batch_num: int,
+) -> tuple[int, int]:
     """Insert one batch; return (attempted, inserted) counts."""
     attempted = len(batch)
     result = connection.execute(UPSERT_SQL, batch)
@@ -68,7 +72,12 @@ def _insert_batch(connection, batch: list[dict], batch_num: int) -> tuple[int, i
     skipped = attempted - inserted
     logger.info(
         f"Batch {batch_num}: {inserted} inserted, {skipped} skipped (already exist)",
-        extra={"stage": "load", "batch": batch_num, "inserted": inserted, "skipped": skipped},
+        extra={
+            "stage": "load",
+            "batch": batch_num,
+            "inserted": inserted,
+            "skipped": skipped,
+        },
     )
     return attempted, inserted
 
@@ -85,7 +94,10 @@ def run(
         (total_inserted, total_skipped)
     """
     if clean_df.empty:
-        logger.info("No clean rows to load — skipping load stage", extra={"stage": "load"})
+        logger.info(
+            "No clean rows to load — skipping load stage",
+            extra={"stage": "load"},
+        )
         return 0, 0
 
     if engine is None:
@@ -103,7 +115,11 @@ def run(
 
     logger.info(
         f"Loading {total_rows} rows in batches of {config.batch_size}",
-        extra={"stage": "load", "total_rows": total_rows, "batch_size": config.batch_size},
+        extra={
+            "stage": "load",
+            "total_rows": total_rows,
+            "batch_size": config.batch_size,
+        },
     )
 
     start_time = time.monotonic()
@@ -111,7 +127,7 @@ def run(
 
     with engine.begin() as conn:
         for batch_start in range(0, total_rows, config.batch_size):
-            batch = rows[batch_start: batch_start + config.batch_size]
+            batch = rows[batch_start : batch_start + config.batch_size]
             batch_num += 1
             attempted, inserted = _insert_batch(conn, batch, batch_num)
             total_inserted += inserted

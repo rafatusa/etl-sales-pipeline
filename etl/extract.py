@@ -102,6 +102,11 @@ def run(config: Config, s3_key: Optional[str] = None) -> tuple[pd.DataFrame, str
 
     logger.info(
         "Extract stage complete",
-        extra={"stage": "extract", "event": "extract_complete", "file": s3_key, "rows": len(df)},
+        extra={
+            "stage": "extract",
+            "event": "extract_complete",
+            "file": s3_key,
+            "rows": len(df),
+        },
     )
     return df, s3_key

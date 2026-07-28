@@ -13,11 +13,11 @@ stages:
         with:
           python-version: "3.11"
       - name: Install linters
-        run: pip install flake8 black isort
+        run: pip install "flake8==7.1.1" "black==26.1.0" "isort==5.13.2"
       - name: Run flake8
         run: flake8 etl/ --max-line-length=120 --exclude=__pycache__
       - name: Check black formatting
-        run: black --check etl/
+        run: black --diff --color etl/
       - name: Check import ordering
         run: isort --check-only etl/
 

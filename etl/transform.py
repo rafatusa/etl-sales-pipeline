@@ -6,7 +6,7 @@ Rules applied in order:
   2. Parse and validate OrderDate as a date (YYYY-MM-DD)
   3. Cast Quantity to int — reject rows where it is not a positive integer
   4. Cast UnitPrice to float — reject rows where it is not a non-negative number
-  5. Compute TotalPrice = Quantity × UnitPrice
+  5. Compute TotalPrice = Quantity x UnitPrice
   6. Reject rows where OrderID or CustomerID or ProductID is blank
   7. Deduplicate on (OrderID, ProductID) — keep first occurrence, tag rest as duplicates
 
@@ -30,26 +30,38 @@ def _strip_strings(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def _validate_dates(df: pd.DataFrame, reject_mask: pd.Series, reasons: list) -> pd.Series:
-    try:
-        pd.to_datetime(df["OrderDate"], format="%Y-%m-%d", errors="coerce")
-    except Exception:
-        pass
-    invalid = pd.to_datetime(df["OrderDate"], format="%Y-%m-%d", errors="coerce").isna()
+def _validate_dates(
+    df: pd.DataFrame,
+    reject_mask: pd.Series,
+    reasons: list,
+) -> pd.Series:
+    invalid = pd.to_datetime(
+        df["OrderDate"], format="%Y-%m-%d", errors="coerce"
+    ).isna()
     for i in df[invalid & ~reject_mask].index:
         reasons[i] = f"invalid_date:{df.at[i, 'OrderDate']}"
     return reject_mask | invalid
 
 
-def _validate_quantity(df: pd.DataFrame, reject_mask: pd.Series, reasons: list) -> pd.Series:
+def _validate_quantity(
+    df: pd.DataFrame,
+    reject_mask: pd.Series,
+    reasons: list,
+) -> tuple[pd.Series, pd.Series]:
     numeric = pd.to_numeric(df["Quantity"], errors="coerce")
-    invalid = numeric.isna() | (numeric <= 0) | (numeric != numeric.astype("Int64", errors="ignore"))
+    invalid = numeric.isna() | (numeric <= 0) | (
+        numeric != numeric.astype("Int64", errors="ignore")
+    )
     for i in df[invalid & ~reject_mask].index:
         reasons[i] = f"invalid_quantity:{df.at[i, 'Quantity']}"
     return reject_mask | invalid, numeric
 
 
-def _validate_unit_price(df: pd.DataFrame, reject_mask: pd.Series, reasons: list) -> pd.Series:
+def _validate_unit_price(
+    df: pd.DataFrame,
+    reject_mask: pd.Series,
+    reasons: list,
+) -> tuple[pd.Series, pd.Series]:
     numeric = pd.to_numeric(df["UnitPrice"], errors="coerce")
     invalid = numeric.isna() | (numeric < 0)
     for i in df[invalid & ~reject_mask].index:
@@ -57,7 +69,11 @@ def _validate_unit_price(df: pd.DataFrame, reject_mask: pd.Series, reasons: list
     return reject_mask | invalid, numeric
 
 
-def _validate_required_ids(df: pd.DataFrame, reject_mask: pd.Series, reasons: list) -> pd.Series:
+def _validate_required_ids(
+    df: pd.DataFrame,
+    reject_mask: pd.Series,
+    reasons: list,
+) -> pd.Series:
     for col in ("OrderID", "CustomerID", "ProductID"):
         blank = df[col].isna() | (df[col].str.strip() == "")
         for i in df[blank & ~reject_mask].index:
@@ -99,7 +115,9 @@ def run(raw_df: pd.DataFrame, source_file: str) -> tuple[pd.DataFrame, pd.DataFr
     # Apply parsed types to the clean portion
     df["Quantity"] = quantity_numeric
     df["UnitPrice"] = unit_price_numeric
-    df["OrderDate"] = pd.to_datetime(df["OrderDate"], format="%Y-%m-%d", errors="coerce").dt.date
+    df["OrderDate"] = pd.to_datetime(
+        df["OrderDate"], format="%Y-%m-%d", errors="coerce"
+    ).dt.date
 
     # Compute TotalPrice for valid rows before dedup
     df["TotalPrice"] = df["Quantity"] * df["UnitPrice"]
