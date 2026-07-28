@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.6
 ###############################################################################
-# Stage 1: builder — install Python dependencies into a venv
+# Stage 1: builder -- install Python dependencies into a venv
 ###############################################################################
 FROM python:3.11-slim AS builder
 
@@ -21,7 +21,7 @@ RUN python -m venv /opt/venv && \
     /opt/venv/bin/pip install --no-cache-dir -r requirements.txt
 
 ###############################################################################
-# Stage 2: runtime — minimal image with non-root user
+# Stage 2: runtime -- minimal image with non-root user
 ###############################################################################
 FROM python:3.11-slim AS runtime
 
@@ -51,6 +51,7 @@ ENV PATH="/opt/venv/bin:$PATH" \
 
 USER etl-user
 
-# Batch job — no long-running process, so no HEALTHCHECK
-# ENTRYPOINT in exec form so SIGTERM is handled correctly
-ENTRYPOINT ["python", "main.py"]
+# Use CMD (not ENTRYPOINT) so ECS task command overrides replace the full command.
+# ECS --overrides command:["python","scripts/init_schema.py"] works correctly
+# only when ENTRYPOINT is not set -- CMD is fully replaced by the override.
+CMD ["python", "main.py"]
