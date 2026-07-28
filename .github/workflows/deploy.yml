@@ -149,12 +149,31 @@ jobs:
 
         '
       working-directory: infra
+    - id: register_task
+      name: Register fresh ECS task definition with current image tag
+      run: "ECR_URL=$(terraform output -raw ecr_repository_url)\nNEW_IMAGE=\"${ECR_URL}:${IMAGE_TAG}\"\
+        \nFAMILY=$(terraform output -raw ecs_task_definition_arn | sed 's|.*/task-definition/||'\
+        \ | sed 's|:[0-9]*$||')\necho \"Registering new task definition revision for\
+        \ family: $FAMILY\"\necho \"Image: $NEW_IMAGE\"\nCURRENT_DEF=$(aws ecs describe-task-definition\
+        \ \\\n  --task-definition \"$FAMILY\" \\\n  --query 'taskDefinition' --output\
+        \ json)\nNEW_DEF=$(echo \"$CURRENT_DEF\" | python3 -c \"\nimport json, sys\n\
+        td = json.load(sys.stdin)\nfor c in td.get('containerDefinitions', []):\n\
+        \    if c['name'] == 'etl':\n        c['image'] = '${NEW_IMAGE}'\nkeep = ['family','taskRoleArn','executionRoleArn','networkMode',\n\
+        \        'containerDefinitions','volumes','placementConstraints',\n      \
+        \  'requiresCompatibilities','cpu','memory','tags']\nout = {k: td[k] for k\
+        \ in keep if k in td}\nprint(json.dumps(out))\n\")\nNEW_ARN=$(aws ecs register-task-definition\
+        \ \\\n  --cli-input-json \"$NEW_DEF\" \\\n  --query 'taskDefinition.taskDefinitionArn'\
+        \ --output text)\necho \"Registered new task definition: $NEW_ARN\"\necho\
+        \ \"task_def_arn=$NEW_ARN\" >> \"$GITHUB_OUTPUT\"\n"
+      working-directory: infra
+      env:
+        IMAGE_TAG: ${{ github.sha }}
     - name: Run DB schema init via ECS Fargate task
-      run: "CLUSTER=$(terraform output -raw ecs_cluster_name)\nTASK_DEF=$(terraform\
-        \ output -raw ecs_task_definition_arn)\nSUBNET=$(terraform output -raw private_subnet_id)\n\
-        TASK_SG=$(terraform output -raw ecs_task_sg_id)\necho \"Launching schema-init\
-        \ task in VPC (cluster: $CLUSTER) ...\"\nTASK_ARN=$(aws ecs run-task \\\n\
-        \  --cluster \"$CLUSTER\" \\\n  --task-definition \"$TASK_DEF\" \\\n  --launch-type\
+      run: "CLUSTER=$(terraform output -raw ecs_cluster_name)\nSUBNET=$(terraform\
+        \ output -raw private_subnet_id)\nTASK_SG=$(terraform output -raw ecs_task_sg_id)\n\
+        echo \"Launching schema-init task in VPC (cluster: $CLUSTER) ...\"\necho \"\
+        Task definition: $FRESH_TASK_DEF\"\nTASK_ARN=$(aws ecs run-task \\\n  --cluster\
+        \ \"$CLUSTER\" \\\n  --task-definition \"$FRESH_TASK_DEF\" \\\n  --launch-type\
         \ FARGATE \\\n  --network-configuration \"awsvpcConfiguration={subnets=[$SUBNET],securityGroups=[$TASK_SG],assignPublicIp=DISABLED}\"\
         \ \\\n  --overrides '{\"containerOverrides\":[{\"name\":\"etl\",\"command\"\
         :[\"python\",\"scripts/init_schema.py\"]}]}' \\\n  --query 'tasks[0].taskArn'\
@@ -166,6 +185,8 @@ jobs:
         \ != \"0\" ]; then\n  echo \"Schema init failed. Check CloudWatch Logs for\
         \ details.\"\n  exit 1\nfi\necho \"Schema init completed successfully.\"\n"
       working-directory: infra
+      env:
+        FRESH_TASK_DEF: ${{ steps.register_task.outputs.task_def_arn }}
     - name: Confirm EventBridge schedule provisioned
       run: 'SCHEDULE_ARN=$(terraform output -raw eventbridge_schedule_arn)
 
@@ -194,13 +215,41 @@ jobs:
         \ secrets.TF_STATE_BUCKET }}\" \\\n  -backend-config=\"key=${{ secrets.PROJECT_NAME\
         \ }}/terraform.tfstate\" \\\n  -backend-config=\"region=us-east-1\"\n"
       working-directory: infra
-    - name: Verify ECS task definition is ACTIVE
-      run: "TASK_DEF=$(terraform output -raw ecs_task_definition_arn)\nSTATUS=$(aws\
-        \ ecs describe-task-definition --task-definition \"$TASK_DEF\" \\\n  --query\
-        \ 'taskDefinition.status' --output text)\necho \"Task definition status: $STATUS\"\
-        \n[ \"$STATUS\" = \"ACTIVE\" ] && echo \"ECS task definition verified ACTIVE\"\
-        \ || (echo \"Unexpected status: $STATUS\" && exit 1)\n"
+    - id: resolve_task
+      name: Resolve latest ECS task definition for current image
+      run: "ECR_URL=$(terraform output -raw ecr_repository_url)\nNEW_IMAGE=\"${ECR_URL}:${IMAGE_TAG}\"\
+        \nFAMILY=$(terraform output -raw ecs_task_definition_arn | sed 's|.*/task-definition/||'\
+        \ | sed 's|:[0-9]*$||')\nLATEST_ARN=$(aws ecs describe-task-definition \\\n\
+        \  --task-definition \"$FAMILY\" \\\n  --query 'taskDefinition.taskDefinitionArn'\
+        \ --output text)\nCURRENT_IMAGE=$(aws ecs describe-task-definition \\\n  --task-definition\
+        \ \"$FAMILY\" \\\n  --query 'taskDefinition.containerDefinitions[0].image'\
+        \ --output text)\necho \"Current task image: $CURRENT_IMAGE\"\necho \"Expected\
+        \ image:     $NEW_IMAGE\"\nif [ \"$CURRENT_IMAGE\" = \"$NEW_IMAGE\" ]; then\n\
+        \  echo \"Task definition already uses current image. Using: $LATEST_ARN\"\
+        \n  echo \"task_def_arn=$LATEST_ARN\" >> \"$GITHUB_OUTPUT\"\nelse\n  echo\
+        \ \"Registering fresh task definition with current image ...\"\n  CURRENT_DEF=$(aws\
+        \ ecs describe-task-definition \\\n    --task-definition \"$FAMILY\" \\\n\
+        \    --query 'taskDefinition' --output json)\n  NEW_DEF=$(echo \"$CURRENT_DEF\"\
+        \ | python3 -c \"\nimport json, sys\ntd = json.load(sys.stdin)\nfor c in td.get('containerDefinitions',\
+        \ []):\n    if c['name'] == 'etl':\n        c['image'] = '${NEW_IMAGE}'\n\
+        keep = ['family','taskRoleArn','executionRoleArn','networkMode',\n       \
+        \ 'containerDefinitions','volumes','placementConstraints',\n        'requiresCompatibilities','cpu','memory','tags']\n\
+        out = {k: td[k] for k in keep if k in td}\nprint(json.dumps(out))\n  \")\n\
+        \  NEW_ARN=$(aws ecs register-task-definition \\\n    --cli-input-json \"\
+        $NEW_DEF\" \\\n    --query 'taskDefinition.taskDefinitionArn' --output text)\n\
+        \  echo \"Registered: $NEW_ARN\"\n  echo \"task_def_arn=$NEW_ARN\" >> \"$GITHUB_OUTPUT\"\
+        \nfi\n"
       working-directory: infra
+      env:
+        IMAGE_TAG: ${{ github.sha }}
+    - name: Verify ECS task definition is ACTIVE
+      run: "STATUS=$(aws ecs describe-task-definition --task-definition \"$TASK_DEF_ARN\"\
+        \ \\\n  --query 'taskDefinition.status' --output text)\necho \"Task definition\
+        \ status: $STATUS\"\n[ \"$STATUS\" = \"ACTIVE\" ] && echo \"ECS task definition\
+        \ verified ACTIVE\" || (echo \"Unexpected status: $STATUS\" && exit 1)\n"
+      working-directory: infra
+      env:
+        TASK_DEF_ARN: ${{ steps.resolve_task.outputs.task_def_arn }}
     - name: Verify S3 landing bucket and sample CSV
       run: 'BUCKET=$(terraform output -raw s3_bucket_name)
 
@@ -217,11 +266,11 @@ jobs:
         \ $LOG_GROUP\"\n"
       working-directory: infra
     - name: Run trial ETL via ECS Fargate and verify success
-      run: "CLUSTER=$(terraform output -raw ecs_cluster_name)\nTASK_DEF=$(terraform\
-        \ output -raw ecs_task_definition_arn)\nSUBNET=$(terraform output -raw private_subnet_id)\n\
-        TASK_SG=$(terraform output -raw ecs_task_sg_id)\necho \"Launching trial ETL\
-        \ run ...\"\nTASK_ARN=$(aws ecs run-task \\\n  --cluster \"$CLUSTER\" \\\n\
-        \  --task-definition \"$TASK_DEF\" \\\n  --launch-type FARGATE \\\n  --network-configuration\
+      run: "CLUSTER=$(terraform output -raw ecs_cluster_name)\nSUBNET=$(terraform\
+        \ output -raw private_subnet_id)\nTASK_SG=$(terraform output -raw ecs_task_sg_id)\n\
+        echo \"Launching trial ETL run ...\"\necho \"Task definition: $TASK_DEF_ARN\"\
+        \nTASK_ARN=$(aws ecs run-task \\\n  --cluster \"$CLUSTER\" \\\n  --task-definition\
+        \ \"$TASK_DEF_ARN\" \\\n  --launch-type FARGATE \\\n  --network-configuration\
         \ \"awsvpcConfiguration={subnets=[$SUBNET],securityGroups=[$TASK_SG],assignPublicIp=DISABLED}\"\
         \ \\\n  --query 'tasks[0].taskArn' --output text)\necho \"Trial ETL task ARN:\
         \ $TASK_ARN\"\naws ecs wait tasks-stopped --cluster \"$CLUSTER\" --tasks \"\
@@ -232,3 +281,5 @@ jobs:
         \ output -raw cloudwatch_log_group)\"\n  exit 1\nfi\necho \"Trial ETL run\
         \ completed successfully. Pipeline is live.\"\n"
       working-directory: infra
+      env:
+        TASK_DEF_ARN: ${{ steps.resolve_task.outputs.task_def_arn }}
