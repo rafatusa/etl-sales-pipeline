@@ -1,8 +1,8 @@
 ###############################################################################
-# IAM — ECS task execution role + task role (least privilege)
+# IAM -- ECS task execution role + task role (least privilege)
 ###############################################################################
 
-# Task Execution Role — allows ECS agent to pull image + push logs
+# Task Execution Role -- allows ECS agent to pull image, push logs, fetch secrets
 resource "aws_iam_role" "ecs_task_execution" {
   name = "${var.project_name}-ecs-exec-role"
 
@@ -21,7 +21,28 @@ resource "aws_iam_role_policy_attachment" "ecs_task_execution" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
-# Task Role — application-level permissions (S3 + CloudWatch + Secrets Manager)
+# Allow the execution role to retrieve the DB credentials secret at container startup.
+# AmazonECSTaskExecutionRolePolicy covers ECR pull + CloudWatch but NOT Secrets Manager.
+resource "aws_iam_role_policy" "ecs_task_execution_secrets" {
+  name = "${var.project_name}-ecs-exec-secrets-policy"
+  role = aws_iam_role.ecs_task_execution.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "SecretsManagerGetSecret"
+        Effect = "Allow"
+        Action = ["secretsmanager:GetSecretValue"]
+        Resource = [
+          aws_secretsmanager_secret.db_credentials.arn
+        ]
+      }
+    ]
+  })
+}
+
+# Task Role -- application-level permissions (S3 + CloudWatch + Secrets Manager)
 resource "aws_iam_role" "ecs_task" {
   name = "${var.project_name}-ecs-task-role"
 
@@ -86,7 +107,7 @@ resource "aws_iam_role_policy_attachment" "ecs_task" {
 }
 
 ###############################################################################
-# Secrets Manager — DB credentials
+# Secrets Manager -- DB credentials
 ###############################################################################
 
 resource "aws_secretsmanager_secret" "db_credentials" {
