@@ -11,7 +11,7 @@ resource "random_id" "bucket_suffix" {
 
 resource "aws_s3_bucket" "landing" {
   bucket        = "${var.project_name}-landing-${random_id.bucket_suffix.hex}"
-  force_destroy = false
+  force_destroy = true
 
   tags = { Name = "${var.project_name}-landing" }
 }
